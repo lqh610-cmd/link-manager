@@ -1,0 +1,65 @@
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# Database
+*.db
+*.sqlite3
+link_manager.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+temp/
+tmp/
+
+# Logs
+*.log
+
+# Render
+# Procfile  <- XÓA DÒNG NÀY HOẶC COMMENT NÓ
+# Procfile.yaml  <- XÓA DÒNG NÀY NẾU CÓ

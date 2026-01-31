@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Bảng Quản Lý Link - Tự Động Lưu Firestore</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+<style>
+/* ==== CSS ==== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-container {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Phần header cố định */
+.fixed-header {
+    background: linear-gradient(135deg, #2c3e50 0%, #4a6491 100%);
+    color: white;
+    flex-shrink: 0;
+    z-index: 1000;
+}
+
+.main-header {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 30px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.search-container {
+    flex: 1;
+    max-width: 600px;
+    position: relative;
+    margin-right: 20px;
+}
+
+.search-box {
+    width: 100%;
+    padding: 12px 45px 12px 20px;
+    border: none;
+    border-radius: 25px;
+    font-size: 15px;
+    background: rgba(255, 255, 255, 0.15);
+    color: white;
+    transition: all 0.3s ease;
+}
+
+.search-box::placeholder {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.search-box:focus {
+    outline: none;
+    background: rgba(255, 255, 255, 0.25);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+}
+
+.search-icon {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: rgba(255, 255, 255, 0.8);
+    pointer-events: none;
+}
+
+.header-controls {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s ease;
+    min-height: 40px;
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}
+
+.check-btn {
+    background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);
+    color: white;
+}
+
+.save-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    padding: 8px 15px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    min-width: 120px;
+    justify-content: center;
+}
+
+.save-status.saving {
+    color: #ffcc00;
+    animation: pulse 1.5s infinite;
+}
+
+.save-status.saved {
+    color: #2ecc71;
+}
+
+.save-status.error {
+    color: #e74c3c;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.05); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+/* Phần nội dung chính */
+.main-content {
+    flex: 1;
+    overflow: hidden;
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+.container {
+    max-width: 1400px;
+    width: 100%;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.table-container {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.table-wrapper {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+}
+
+table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    min-width: 900px;
+}
+
+th, td {
+    padding: 15px;
+    border-bottom: 1px solid #eaeaea;
+    text-align: left;
+}
+
+thead {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+th {
+    font-weight: 600;
+    color: #2c3e50;
+    border-bottom: 2px solid #dee2e6;
+    position: sticky;
+    top: 0;
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    z-index: 10;
+}
+
+tbody tr {
+    transition: background-color 0.2s;
+}
+
+tbody tr:hover {
+    background-color: #f8f9fa;
+}
+
+tbody tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+.content-cell {
+    min-width: 300px;
+}
+
+.content-cell input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 16px;
+    transition: all 0.3s;
+}
+
+.content-cell input:focus {
+    outline: none;
+    border-color: #4a6491;
+    box-shadow: 0 0 0 3px rgba(74, 100, 145, 0.1);
+}
+
+.content-cell input.saving {
+    border-left: 3px solid #ffcc00;
+    background-color: #fffde7;
+}
+
+.content-cell input.error {
+    border-left: 3px solid #e74c3c;
+    background-color: #ffebee;
+}
+
+.url-cell {
+    min-width: 500px;
+}
+
+.url-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.url-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background: white;
+    transition: all 0.3s;
+}
+
+.url-item:hover {
+    border-color: #4a6491;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+}
+
+.url-item.duplicate {
+    border-color: #e74c3c;
+    background-color: #ffebee;
+    animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.url-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.url-input:focus {
+    outline: none;
+    border-color: #4a6491;
+}
+
+.url-input.saving {
+    border-left: 3px solid #ffcc00;
+    background-color: #fffde7;
+}
+
+.url-input.error {
+    border-left: 3px solid #e74c3c;
+    background-color: #ffebee;
+}
+
+.url-actions {
+    display: flex;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.url-action-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.url-open-btn {
+    background-color: #e3f2fd;
+    color: #1976d2;
+}
+
+.url-open-btn:hover:not(:disabled) {
+    background-color: #bbdefb;
+}
+
+.url-open-btn:disabled {
+    background-color: #f5f5f5;
+    color: #bdbdbd;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.url-delete-btn {
+    background-color: #ffebee;
+    color: #d32f2f;
+}
+
+.url-delete-btn:hover {
+    background-color: #ffcdd2;
+}
+
+.url-status {
+    font-size: 12px;
+    font-weight: bold;
+    padding: 5px 12px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    min-width: 80px;
+    text-align: center;
+}
+
+.status-alive {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #c8e6c9;
+}
+
+.status-dead {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #ffcdd2;
+}
+
+.status-unknown {
+    background: #f5f5f5;
+    color: #616161;
+    border: 1px solid #e0e0e0;
+}
+
+.row-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+.row-button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s;
+}
+
+.open-all-btn {
+    background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+    color: white;
+}
+
+.open-all-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(52, 152, 219, 0.2);
+}
+
+.open-all-btn:disabled {
+    background: linear-gradient(135deg, #bdc3c7 0%, #95a5a6 100%);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.add-url-btn {
+    background: linear-gradient(135deg, #4a6491 0%, #2c3e50 100%);
+    color: white;
+}
+
+.add-url-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(44, 62, 80, 0.2);
+}
+
+.delete-row-btn {
+    background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+    color: white;
+}
+
+.delete-row-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(231, 76, 60, 0.2);
+}
+
+.add-content-btn {
+    width: 100%;
+    padding: 18px;
+    border: 2px dashed #c3cfe2;
+    background: #f8fafc;
+    cursor: pointer;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #4a6491;
+    margin-top: 20px;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.add-content-btn:hover {
+    background: #eef2f7;
+    border-color: #4a6491;
+}
+
+.toast {
+    position: fixed;
+    bottom: 25px;
+    right: 25px;
+    background: rgba(44, 62, 80, 0.95);
+    color: white;
+    padding: 15px 25px;
+    border-radius: 8px;
+    display: none;
+    z-index: 1000;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    animation: slideIn 0.3s ease-out;
+    max-width: 400px;
+}
+
+.toast.error {
+    background: rgba(231, 76, 60, 0.95);
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+.row-number {
+    font-weight: bold;
+    color: #4a6491;
+    font-size: 16px;
+    text-align: center;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: #7f8c8d;
+    font-style: italic;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.popup-warning {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.2);
+    z-index: 2000;
+    max-width: 400px;
+    width: 90%;
+    display: none;
+}
+
+.popup-content {
+    text-align: center;
+}
+
+.popup-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+.popup-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+
+.popup-confirm {
+    background: #4a6491;
+    color: white;
+}
+
+.popup-cancel {
+    background: #f5f5f5;
+    color: #333;
+}
+
+.popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1999;
+    display: none;
+}
+
+.row-highlight {
+    background-color: #fffacd !important;
+    box-shadow: 0 0 0 2px #ffd700 !important;
+    border-radius: 4px;
+    position: relative;
+    z-index: 5;
+}
+
+.url-highlight {
+    background-color: #e8f5e9 !important;
+    border-color: #4caf50 !important;
+}
+
+.loading-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255,255,255,.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s ease-in-out infinite;
+    margin-right: 8px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.empty-url-list {
+    text-align: center;
+    padding: 20px;
+    color: #95a5a6;
+    font-style: italic;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px dashed #dfe6e9;
+    margin-bottom: 15px;
+}
+
+.empty-url-list i {
+    font-size: 24px;
+    margin-bottom: 10px;
+    opacity: 0.5;
+}
+
+@media (max-width: 768px) {
+    .main-header {
+        flex-direction: column;
+        align-items: stretch;
+        padding: 15px;
+    }
+
+    .search-container {
+        max-width: 100%;
+        margin-right: 0;
+        margin-bottom: 15px;
+    }
+
+    .header-controls {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .main-content {
+        padding: 10px;
+    }
+
+    th, td {
+        padding: 12px 10px;
+    }
+
+    .btn {
+        padding: 8px 16px;
+        font-size: 13px;
+    }
+
+    .row-buttons {
+        flex-direction: column;
+    }
+
+    .row-button {
+        width: 100%;
+        justify-content: center;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="app-container">
+    <!-- Header cố định -->
+    <div class="fixed-header">
+        <div class="main-header">
+            <div class="search-container">
+                <input type="text"
+                       class="search-box"
+                       id="searchInput"
+                       placeholder="Tìm kiếm collection hoặc URL..."
+                       autocomplete="off">
+                <i class="fas fa-search search-icon"></i>
+            </div>
+
+            <div class="header-controls">
+                <div class="save-status saved" id="saveStatus">
+                    <i class="fas fa-check-circle"></i> Đã lưu
+                </div>
+                <button class="btn check-btn" id="checkAllBtn">
+                    <i class="fas fa-search"></i> Kiểm tra tất cả link
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Nội dung chính -->
+    <div class="main-content">
+        <div class="container">
+            <div class="table-container">
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th width="60">STT</th>
+                                <th class="content-cell">Collection</th>
+                                <th class="url-cell">Link</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                            <!-- Dữ liệu sẽ được thêm vào đây -->
+                        </tbody>
+                    </table>
+
+                    <div class="empty-state" id="emptyState" style="display: none;">
+                        <i class="fas fa-inbox" style="font-size: 48px; margin-bottom: 15px; opacity: 0.5;"></i>
+                        <p>Chưa có dữ liệu. Hãy thêm collection đầu tiên!</p>
+                    </div>
+                </div>
+
+                <button class="add-content-btn" id="addRowBtn">
+                    <i class="fas fa-plus-circle"></i> Thêm collection mới
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Popup cảnh báo -->
+<div id="popupOverlay" class="popup-overlay"></div>
+<div id="popupWarning" class="popup-warning">
+    <div class="popup-content">
+        <h3><i class="fas fa-exclamation-triangle" style="color: #e67e22; margin-right: 10px;"></i>Cảnh báo</h3>
+        <p id="popupMessage">Bạn sắp mở <span id="linkCount">0</span> tab.</p>
+        <div class="popup-buttons">
+            <button class="popup-btn popup-cancel" id="popupCancel">Hủy</button>
+            <button class="popup-btn popup-confirm" id="popupOpenAll">Mở tất cả</button>
+            <button class="popup-btn popup-confirm" id="popupOpenSequential">Mở tuần tự</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// ========= GLOBAL VARIABLES =========
+let data = [];
+let autoSaveTimeout = null;
+let isSaving = false;
+let currentHighlightedRow = null;
+
+const tableBody = document.getElementById('tableBody');
+const emptyState = document.getElementById('emptyState');
+const toast = document.getElementById('toast');
+const searchInput = document.getElementById('searchInput');
+const saveStatus = document.getElementById('saveStatus');
+const popupWarning = document.getElementById('popupWarning');
+const popupOverlay = document.getElementById('popupOverlay');
+
+// ========= UTILITY FUNCTIONS =========
+function escapeHTML(str) {
+    if (!str) return '';
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+function unescapeHTML(str) {
+    if (!str) return '';
+    return str
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'");
+}
+
+function normalizeUrl(url) {
+    if (!url) return '';
+    url = url.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
+    return url;
+}
+
+function updateSaveStatus(status, message = '') {
+    if (status === 'saving') {
+        saveStatus.className = 'save-status saving';
+        saveStatus.innerHTML = '<span class="loading-spinner"></span> Đang lưu...';
+        isSaving = true;
+    } else if (status === 'saved') {
+        saveStatus.className = 'save-status saved';
+        saveStatus.innerHTML = '<i class="fas fa-check-circle"></i> Đã lưu';
+        isSaving = false;
+    } else if (status === 'error') {
+        saveStatus.className = 'save-status error';
+        saveStatus.innerHTML = `<i class="fas fa-exclamation-triangle"></i> ${message || 'Lỗi lưu'}`;
+        setTimeout(() => {
+            saveStatus.className = 'save-status saved';
+            saveStatus.innerHTML = '<i class="fas fa-check-circle"></i> Đã lưu';
+        }, 3000);
+    }
+}
+
+function showToast(msg, isError = false) {
+    toast.textContent = msg;
+    toast.style.display = 'block';
+    toast.className = isError ? 'toast error' : 'toast';
+    setTimeout(() => toast.style.display = 'none', 3000);
+}
+
+// ========= SMART AUTO-SAVE SYSTEM =========
+let pendingAutoSaves = new Map();
+
+function scheduleAutoSave(collectionName, dataToSave = null) {
+    if (isSaving) return;
+
+    // Lấy data hiện tại nếu không cung cấp
+    if (!dataToSave) {
+        const row = data.find(r => r.collection === collectionName);
+        if (!row) return;
+        dataToSave = { collection: collectionName, urls: row.urls || [] };
+    }
+
+    // Hủy timeout cũ nếu có
+    if (pendingAutoSaves.has(collectionName)) {
+        clearTimeout(pendingAutoSaves.get(collectionName));
+    }
+
+    // Đặt timeout mới
+    const timeoutId = setTimeout(async () => {
+        await performAutoSave(collectionName, dataToSave);
+        pendingAutoSaves.delete(collectionName);
+    }, 2000);
+
+    pendingAutoSaves.set(collectionName, timeoutId);
+}
+
+async function performAutoSave(collectionName, dataToSave) {
+    if (isSaving) return;
+
+    updateSaveStatus('saving');
+
+    // Highlight các input đang lưu
+    const inputs = document.querySelectorAll(`input[data-collection="${collectionName}"]`);
+    inputs.forEach(input => input.classList.add('saving'));
+
+    try {
+        const response = await fetch('/api/update-collection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dataToSave)
+        });
+
+        if (response.status === 409) {
+            const errorData = await response.json();
+            highlightDuplicateUrl(collectionName, errorData.duplicate_url || '');
+            updateSaveStatus('error', 'URL trùng lặp');
+            showToast(errorData.error, true);
+            return;
+        }
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const savedData = await response.json();
+        const index = data.findIndex(r => r.collection === collectionName);
+        if (index > -1) {
+            data[index] = savedData;
+        }
+
+        updateSaveStatus('saved');
+        showToast('Đã tự động lưu');
+
+    } catch (error) {
+        updateSaveStatus('error', 'Lỗi kết nối');
+        showToast('Lỗi khi lưu: ' + error.message, true);
+    } finally {
+        inputs.forEach(input => input.classList.remove('saving'));
+    }
+}
+
+function handleCollectionNameChange(oldName, newName) {
+    // Nếu tên không thay đổi, chỉ cần lưu URLs
+    if (oldName === newName || !newName.trim()) {
+        const row = data.find(r => r.collection === oldName);
+        if (row) {
+            scheduleAutoSave(oldName, { collection: oldName, urls: row.urls || [] });
+        }
+        return;
+    }
+
+    // Nếu đổi tên, xử lý riêng
+    performCollectionRename(oldName, newName);
+}
+
+async function performCollectionRename(oldName, newName) {
+    if (isSaving) return;
+
+    updateSaveStatus('saving');
+
+    try {
+        const response = await fetch('/api/rename-collection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ old_name: oldName, new_name: newName })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Lỗi đổi tên collection');
+        }
+
+        const result = await response.json();
+
+        // Cập nhật data trong mảng
+        const rowIndex = data.findIndex(r => r.collection === oldName);
+        if (rowIndex > -1) {
+            data[rowIndex].collection = result.new_name;
+        }
+
+        // Render lại toàn bộ bảng
+        renderAllRows();
+
+        updateSaveStatus('saved');
+        showToast(`Đã đổi tên thành "${result.new_name}"`);
+
+        // Lưu URLs với tên mới sau khi đổi tên thành công
+        const updatedRow = data.find(r => r.collection === result.new_name);
+        if (updatedRow) {
+            scheduleAutoSave(result.new_name, {
+                collection: result.new_name,
+                urls: updatedRow.urls || []
+            });
+        }
+
+    } catch (error) {
+        updateSaveStatus('error', 'Lỗi đổi tên');
+        showToast('Lỗi khi đổi tên: ' + error.message, true);
+
+        // Khôi phục tên cũ trong UI
+        const input = document.querySelector(`input[data-original-name="${oldName}"]`);
+        if (input) {
+            input.value = escapeHTML(oldName);
+        }
+    }
+}
+
+function highlightDuplicateUrl(collectionName, duplicateUrl) {
+    const row = data.find(r => r.collection === collectionName);
+    if (!row || !row.urls) return;
+
+    row.urls.forEach((url, index) => {
+        if (normalizeUrl(url.url) === normalizeUrl(duplicateUrl)) {
+            const urlElement = document.getElementById(`url-item-${collectionName}-${index}`);
+            if (urlElement) {
+                urlElement.classList.add('duplicate');
+                const input = urlElement.querySelector('input');
+                if (input) {
+                    input.classList.add('error');
+                    input.focus();
+                    input.select();
+                }
+                setTimeout(() => {
+                    urlElement.classList.remove('duplicate');
+                    if (input) input.classList.remove('error');
+                }, 5000);
+            }
+        }
+    });
+}
+
+// ========= DATA LOADING =========
+async function loadData() {
+    try {
+        showToast('Đang tải dữ liệu...');
+        const res = await fetch('/api/data');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        data = await res.json();
+        renderAllRows();
+        updateSaveStatus('saved');
+
+        if (data.length === 0) {
+            emptyState.style.display = 'flex';
+        } else {
+            emptyState.style.display = 'none';
+        }
+
+        showToast(`Đã tải ${data.length} collection`);
+    } catch (error) {
+        showToast('Không kết nối được Firestore', true);
+        if (data.length > 0) renderAllRows();
+    }
+}
+
+// ========= RENDERING FUNCTIONS =========
+function renderAllRows() {
+    tableBody.innerHTML = '';
+
+    if (data.length === 0) {
+        emptyState.style.display = 'flex';
+        return;
+    }
+
+    emptyState.style.display = 'none';
+
+    data.forEach((row, index) => {
+        if (!row.collection || row.collection.trim() === '') {
+            row.collection = `Collection_${Date.now()}_${index}`;
+        }
+        if (!row.urls) row.urls = [];
+        renderRow(row, index + 1);
+    });
+}
+
+function renderRow(rowData, displayNumber) {
+    const collectionName = rowData.collection;
+    const hasAliveLinks = rowData.urls && rowData.urls.some(u => u.status === 'alive');
+
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-collection-name', collectionName);
+    tr.innerHTML = `
+        <td class="row-number">${displayNumber}</td>
+        <td class="content-cell">
+            <input type="text"
+                   value="${escapeHTML(collectionName)}"
+                   placeholder="Nhập tên collection..."
+                   data-collection-name="${collectionName}"
+                   data-original-name="${collectionName}">
+        </td>
+        <td class="url-cell">
+            <div class="url-list" id="urls-${collectionName}"></div>
+            <div class="row-buttons">
+                <button class="row-button open-all-btn" onclick="openAllLinks('${collectionName}')" ${!hasAliveLinks ? 'disabled' : ''}>
+                    <i class="fas fa-external-link-alt"></i> Mở All Link
+                </button>
+                <button class="row-button add-url-btn" onclick="addUrlToRow('${collectionName}')">
+                    <i class="fas fa-plus"></i> Thêm link
+                </button>
+                <button class="row-button delete-row-btn" onclick="deleteRow('${collectionName}')">
+                    <i class="fas fa-trash"></i> Xóa Collection
+                </button>
+            </div>
+        </td>
+    `;
+    tableBody.appendChild(tr);
+
+    // Thêm event listener cho đổi tên collection
+    const input = tr.querySelector('input');
+    input.addEventListener('input', (e) => {
+        const oldName = input.getAttribute('data-original-name');
+        const newName = unescapeHTML(e.target.value.trim());
+
+        // Hủy timeout cũ nếu có
+        if (pendingAutoSaves.has(oldName)) {
+            clearTimeout(pendingAutoSaves.get(oldName));
+            pendingAutoSaves.delete(oldName);
+        }
+
+        // Đặt timeout cho đổi tên
+        const timeoutId = setTimeout(() => {
+            handleCollectionNameChange(oldName, newName);
+        }, 2000);
+
+        pendingAutoSaves.set(oldName, timeoutId);
+    });
+
+    const urlList = document.getElementById(`urls-${collectionName}`);
+    if (urlList) {
+        // Hiển thị thông báo nếu collection trống
+        if (!rowData.urls || rowData.urls.length === 0) {
+            const emptyMessage = document.createElement('div');
+            emptyMessage.className = 'empty-url-list';
+            emptyMessage.innerHTML = `
+                <i class="fas fa-link"></i>
+                <p>Collection chưa có link nào</p>
+            `;
+            urlList.appendChild(emptyMessage);
+        } else {
+            // Hiển thị URLs nếu có
+            rowData.urls.forEach((u, index) => renderUrl(collectionName, u, index));
+        }
+    }
+}
+
+function renderUrl(collectionName, urlData, index) {
+    const box = document.getElementById(`urls-${collectionName}`);
+    if (!box) return;
+
+    const isAlive = urlData.status === 'alive';
+    const urlItem = document.createElement('div');
+    urlItem.className = 'url-item';
+    urlItem.id = `url-item-${collectionName}-${index}`;
+    urlItem.innerHTML = `
+        <input class="url-input"
+               value="${escapeHTML(urlData.url || '')}"
+               placeholder="https://example.com..."
+               data-collection="${collectionName}"
+               data-url-index="${index}">
+        <span class="url-status status-${urlData.status || 'unknown'}">${urlData.status || 'unknown'}</span>
+        <div class="url-actions">
+            <button class="url-action-btn url-open-btn" onclick="openSingleLink('${collectionName}', ${index})"
+                    title="Mở link" ${!isAlive ? 'disabled' : ''}>
+                <i class="fas fa-external-link-alt"></i>
+            </button>
+            <button class="url-action-btn url-delete-btn" onclick="deleteUrl('${collectionName}', ${index})" title="Xóa link">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+    `;
+    box.appendChild(urlItem);
+
+    const input = urlItem.querySelector('input');
+    input.addEventListener('input', () => {
+        const row = data.find(r => r.collection === collectionName);
+        if (row) {
+            if (!row.urls) row.urls = [];
+            if (index < row.urls.length) {
+                row.urls[index].url = unescapeHTML(input.value);
+                row.urls[index].status = 'unknown';
+            }
+            scheduleAutoSave(collectionName);
+        }
+    });
+}
+
+// ========= CRUD OPERATIONS =========
+async function addNewRow() {
+    const newCollection = `Collection_${Date.now()}`;
+
+    try {
+        const response = await fetch('/api/add-collection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                collection: newCollection,
+                urls: []
+            })
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const newRow = await response.json();
+        data.push(newRow);
+        renderAllRows();
+
+        setTimeout(() => {
+            const newInput = document.querySelector(`input[data-collection-name="${newCollection}"]`);
+            if (newInput) {
+                newInput.focus();
+                newInput.select();
+            }
+        }, 100);
+
+        showToast('Đã thêm collection mới');
+
+    } catch (error) {
+        showToast('Lỗi khi thêm collection: ' + error.message, true);
+    }
+}
+
+function addUrlToRow(collectionName) {
+    const row = data.find(r => r.collection === collectionName);
+    if (!row) return;
+
+    if (!row.urls) row.urls = [];
+
+    row.urls.push({
+        id: "new",
+        url: '',
+        status: 'unknown'
+    });
+
+    scheduleAutoSave(collectionName);
+
+    const urlList = document.getElementById(`urls-${collectionName}`);
+    if (urlList) {
+        urlList.innerHTML = '';
+        if (row.urls.length === 0) {
+            const emptyMessage = document.createElement('div');
+            emptyMessage.className = 'empty-url-list';
+            emptyMessage.innerHTML = `
+                <i class="fas fa-link"></i>
+                <p>Collection chưa có link nào</p>
+            `;
+            urlList.appendChild(emptyMessage);
+        } else {
+            row.urls.forEach((u, index) => renderUrl(collectionName, u, index));
+        }
+    }
+
+    setTimeout(() => {
+        const newUrlInput = urlList.querySelector(`input[data-url-index="${row.urls.length - 1}"]`);
+        if (newUrlInput) newUrlInput.focus();
+    }, 50);
+}
+
+function deleteUrl(collectionName, index) {
+    const row = data.find(r => r.collection === collectionName);
+    if (!row || !row.urls) return;
+
+    if (index >= 0 && index < row.urls.length) {
+        row.urls.splice(index, 1);
+    }
+
+    scheduleAutoSave(collectionName);
+
+    const urlList = document.getElementById(`urls-${collectionName}`);
+    if (urlList) {
+        urlList.innerHTML = '';
+        if (!row.urls || row.urls.length === 0) {
+            const emptyMessage = document.createElement('div');
+            emptyMessage.className = 'empty-url-list';
+            emptyMessage.innerHTML = `
+                <i class="fas fa-link"></i>
+                <p>Collection chưa có link nào</p>
+            `;
+            urlList.appendChild(emptyMessage);
+        } else {
+            row.urls.forEach((u, idx) => renderUrl(collectionName, u, idx));
+        }
+    }
+}
+
+async function deleteRow(collectionName) {
+    if (!confirm(`Xóa collection "${collectionName}"?`)) return;
+
+    try {
+        const response = await fetch(`/api/delete-collection/${encodeURIComponent(collectionName)}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const rowIndex = data.findIndex(r => r.collection === collectionName);
+        if (rowIndex > -1) data.splice(rowIndex, 1);
+
+        // Hủy timeout nếu có
+        if (pendingAutoSaves.has(collectionName)) {
+            clearTimeout(pendingAutoSaves.get(collectionName));
+            pendingAutoSaves.delete(collectionName);
+        }
+
+        renderAllRows();
+        if (data.length === 0) emptyState.style.display = 'flex';
+
+        showToast('Đã xóa collection');
+
+    } catch (error) {
+        showToast('Lỗi khi xóa: ' + error.message, true);
+    }
+}
+
+// ========= LINK OPERATIONS =========
+function openSingleLink(collectionName, index) {
+    const row = data.find(r => r.collection === collectionName);
+    if (!row || !row.urls || index >= row.urls.length) return;
+
+    const urlData = row.urls[index];
+    if (!urlData.url || urlData.status !== 'alive') return;
+
+    let url = urlData.url.trim();
+    if (!url.startsWith('http')) url = 'https://' + url;
+
+    window.open(url, '_blank');
+}
+
+function openAllLinks(collectionName) {
+    const row = data.find(r => r.collection === collectionName);
+    if (!row || !row.urls || row.urls.length === 0) return;
+
+    const aliveLinks = row.urls
+        .filter(u => u.status === 'alive' && u.url)
+        .map(u => {
+            let url = u.url.trim();
+            if (!url.startsWith('http')) url = 'https://' + url;
+            return url;
+        });
+
+    if (aliveLinks.length === 0) return;
+
+    if (aliveLinks.length > 5) {
+        showPopupWarning(aliveLinks.length,
+            () => aliveLinks.forEach(link => window.open(link, '_blank')),
+            () => aliveLinks.forEach((link, i) =>
+                setTimeout(() => window.open(link, '_blank'), i * 300)
+            )
+        );
+    } else {
+        aliveLinks.forEach(link => window.open(link, '_blank'));
+    }
+}
+
+function showPopupWarning(count, callbackAll, callbackSequential) {
+    document.getElementById('linkCount').textContent = count;
+    popupWarning.style.display = 'block';
+    popupOverlay.style.display = 'block';
+
+    document.getElementById('popupCancel').onclick = () => {
+        popupWarning.style.display = 'none';
+        popupOverlay.style.display = 'none';
+    };
+
+    document.getElementById('popupOpenAll').onclick = () => {
+        popupWarning.style.display = 'none';
+        popupOverlay.style.display = 'none';
+        callbackAll();
+    };
+
+    document.getElementById('popupOpenSequential').onclick = () => {
+        popupWarning.style.display = 'none';
+        popupOverlay.style.display = 'none';
+        callbackSequential();
+    };
+}
+
+// ========= CHECK ALL LINKS =========
+async function checkAllLinks() {
+    const allLinks = [];
+
+    data.forEach(r => {
+        if (r.urls && r.urls.length > 0) {
+            r.urls.forEach(u => {
+                if (u.url && u.url.trim()) {
+                    allLinks.push({
+                        id: u.id || u.url,
+                        url: normalizeUrl(u.url),
+                        collection: r.collection
+                    });
+                }
+            });
+        }
+    });
+
+    if (allLinks.length === 0) {
+        showToast('Không có link nào để kiểm tra');
+        return;
+    }
+
+    showToast(`Đang kiểm tra ${allLinks.length} link...`);
+
+    const linksByCollection = {};
+    allLinks.forEach(link => {
+        if (!linksByCollection[link.collection]) {
+            linksByCollection[link.collection] = [];
+        }
+        linksByCollection[link.collection].push(link);
+    });
+
+    for (const collectionName in linksByCollection) {
+        try {
+            const response = await fetch('/api/check-links', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    collection: collectionName,
+                    links: linksByCollection[collectionName]
+                })
+            });
+
+            if (!response.ok) continue;
+
+            const result = await response.json();
+
+            const row = data.find(r => r.collection === collectionName);
+            if (row && row.urls) {
+                result.forEach(r => {
+                    const urlObj = row.urls.find(u =>
+                        (u.id && u.id === r.id) || u.url === r.url
+                    );
+                    if (urlObj) {
+                        urlObj.status = r.status;
+                        urlObj.id = r.id || urlObj.id;
+                    }
+                });
+            }
+
+        } catch (error) {
+            console.error(`Error checking ${collectionName}:`, error);
+        }
+    }
+
+    renderAllRows();
+    showToast(`Đã kiểm tra xong ${allLinks.length} link`);
+
+    // Tự động lưu các collection có link status thay đổi
+    data.forEach(row => {
+        if (row.urls && row.urls.some(u => u.status !== 'unknown')) {
+            scheduleAutoSave(row.collection);
+        }
+    });
+}
+
+// ========= EVENT LISTENERS =========
+document.getElementById('addRowBtn').addEventListener('click', addNewRow);
+document.getElementById('checkAllBtn').addEventListener('click', checkAllLinks);
+
+let searchTimeout = null;
+searchInput.addEventListener('input', (e) => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        const term = e.target.value;
+        if (!term.trim()) {
+            if (currentHighlightedRow) {
+                const oldRow = document.querySelector(`tr[data-collection-name="${currentHighlightedRow}"]`);
+                if (oldRow) oldRow.classList.remove('row-highlight');
+                currentHighlightedRow = null;
+            }
+            return;
+        }
+
+        const bestMatch = data.find(r =>
+            r.collection.toLowerCase().includes(term.toLowerCase()) ||
+            r.urls?.some(u => u.url.toLowerCase().includes(term.toLowerCase()))
+        );
+
+        if (bestMatch) {
+            if (currentHighlightedRow) {
+                const oldRow = document.querySelector(`tr[data-collection-name="${currentHighlightedRow}"]`);
+                if (oldRow) oldRow.classList.remove('row-highlight');
+            }
+
+            const rowElement = document.querySelector(`tr[data-collection-name="${bestMatch.collection}"]`);
+            if (rowElement) {
+                rowElement.classList.add('row-highlight');
+                currentHighlightedRow = bestMatch.collection;
+                rowElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    }, 300);
+});
+
+// Tải dữ liệu khi trang được load
+document.addEventListener('DOMContentLoaded', loadData);
+</script>
+
+</body>
+</html>
