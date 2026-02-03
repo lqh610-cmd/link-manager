@@ -1,65 +1,86 @@
-# PyCharm
-.idea/
-*.iml
-*.ipr
-*.iws
-
+# ==============================
 # Python
+# ==============================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# Virtual Environment
+# Build / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# ==============================
+# Virtual Environment (QUAN TRỌNG)
+# ==============================
 venv/
 .venv/
 env/
 ENV/
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
 
-# IDE
+# ==============================
+# Environment variables / secrets
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# Database local
+# ==============================
+*.db
+*.sqlite3
+
+# ==============================
+# Logs / temp / runtime
+# ==============================
+*.log
+logs/
+temp/
+tmp/
+instance/
+.flaskenv
+
+# ==============================
+# IDE / Editor
+# ==============================
+.idea/
 .vscode/
+*.iml
 *.swp
 *.swo
 *~
 
-# Database
-*.db
-*.sqlite3
-link_manager.db
-
-# OS
+# ==============================
+# OS files
+# ==============================
 .DS_Store
 Thumbs.db
 
-# Temp files
-temp/
-tmp/
+# ==============================
+# Testing / coverage
+# ==============================
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
 
-# Logs
-*.log
+# ==============================
+# Node (nếu có frontend)
+# ==============================
+node_modules/
+npm-debug.log*
 
+# ==============================
 # Render
-# Procfile  <- XÓA DÒNG NÀY HOẶC COMMENT NÓ
-# Procfile.yaml  <- XÓA DÒNG NÀY NẾU CÓ
+# ==============================
+# KHÔNG ignore:
+#   render.yaml
+#   Procfile (nếu dùng)
+#   requirements.txt
+#   runtime.txt
