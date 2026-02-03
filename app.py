@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import requests
 import threading
 from datetime import datetime
@@ -11,10 +12,6 @@ import socket
 from urllib.parse import urlparse
 import atexit
 import tempfile
-import traceback
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from psycopg2.pool import SimpleConnectionPool
 
 # =====================================================
 # APP + PATH
@@ -25,230 +22,96 @@ app = Flask(__name__,
 
 import sys
 
-# Kiểm tra môi trường
-IS_RENDER = 'RENDER' in os.environ
-IS_LOCAL = not IS_RENDER
-
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+DB_PATH = os.path.join(BASE_DIR, 'links.db')
+
+
 # =====================================================
-# DATABASE CONFIGURATION
+# DATABASE INITIALIZATION
 # =====================================================
-if IS_RENDER:
-    # PostgreSQL trên Render
-    DATABASE_URL = os.environ.get('DATABASE_URL')
-else:
-    # SQLite cho local development
-    DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'link_manager.db')}"
-
-# Connection pool cho PostgreSQL
-pg_pool = None
-
-
-def get_db_connection():
-    """Get database connection - supports both PostgreSQL and SQLite"""
-    if IS_RENDER:
-        # PostgreSQL
-        global pg_pool
-        if pg_pool is None:
-            pg_pool = SimpleConnectionPool(1, 10, DATABASE_URL, sslmode='require')
-
-        conn = pg_pool.getconn()
-        conn.autocommit = False
-        return conn
-    else:
-        # SQLite cho local
-        import sqlite3
-        conn = sqlite3.connect(os.path.join(BASE_DIR, 'link_manager.db'))
-        conn.row_factory = sqlite3.Row
-        return conn
-
-
-def close_db_connection(conn):
-    """Close database connection"""
-    if IS_RENDER and pg_pool:
-        pg_pool.putconn(conn)
-    else:
-        conn.close()
-
-
 def init_db():
-    """Initialize database tables"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    """Khởi tạo database"""
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
 
-    try:
-        if IS_RENDER:
-            # PostgreSQL
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS collections
-                           (
-                               id
-                               SERIAL
-                               PRIMARY
-                               KEY,
-                               name
-                               VARCHAR
-                           (
-                               255
-                           ) UNIQUE NOT NULL,
-                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                               )
-                           ''')
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA cache_size = 10000")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    conn.execute("PRAGMA foreign_keys = ON")
 
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS links
-                           (
-                               id
-                               SERIAL
-                               PRIMARY
-                               KEY,
-                               collection_id
-                               INTEGER
-                               NOT
-                               NULL
-                               REFERENCES
-                               collections
-                           (
-                               id
-                           ) ON DELETE CASCADE,
-                               url TEXT NOT NULL,
-                               status VARCHAR
-                           (
-                               50
-                           ) DEFAULT 'unknown',
-                               last_checked TIMESTAMP,
-                               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                               UNIQUE
-                           (
-                               collection_id,
-                               url
-                           )
-                               )
-                           ''')
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS contents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        description TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
 
-            # Create indexes
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_collection ON links(collection_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_url ON links(url)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name)')
+    CREATE TABLE IF NOT EXISTS links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content_id INTEGER,
+        url TEXT,
+        status TEXT DEFAULT 'unknown',
+        last_checked DATETIME,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(content_id) REFERENCES contents(id) ON DELETE CASCADE,
+        UNIQUE(content_id, url) ON CONFLICT REPLACE
+    );
 
-        else:
-            # SQLite
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS collections
-                           (
-                               id
-                               INTEGER
-                               PRIMARY
-                               KEY
-                               AUTOINCREMENT,
-                               name
-                               TEXT
-                               UNIQUE
-                               NOT
-                               NULL,
-                               created_at
-                               TIMESTAMP
-                               DEFAULT
-                               CURRENT_TIMESTAMP,
-                               updated_at
-                               TIMESTAMP
-                               DEFAULT
-                               CURRENT_TIMESTAMP
-                           )
-                           ''')
+    CREATE INDEX IF NOT EXISTS idx_content_id ON links(content_id);
+    CREATE INDEX IF NOT EXISTS idx_url_status ON links(url, status);
+    CREATE INDEX IF NOT EXISTS idx_contents_updated ON contents(updated_at DESC);
+    """)
 
-            cursor.execute('''
-                           CREATE TABLE IF NOT EXISTS links
-                           (
-                               id
-                               INTEGER
-                               PRIMARY
-                               KEY
-                               AUTOINCREMENT,
-                               collection_id
-                               INTEGER
-                               NOT
-                               NULL,
-                               url
-                               TEXT
-                               NOT
-                               NULL,
-                               status
-                               TEXT
-                               DEFAULT
-                               'unknown',
-                               last_checked
-                               TIMESTAMP,
-                               created_at
-                               TIMESTAMP
-                               DEFAULT
-                               CURRENT_TIMESTAMP,
-                               updated_at
-                               TIMESTAMP
-                               DEFAULT
-                               CURRENT_TIMESTAMP,
-                               FOREIGN
-                               KEY
-                           (
-                               collection_id
-                           ) REFERENCES collections
-                           (
-                               id
-                           )
-                               ON DELETE CASCADE,
-                               UNIQUE
-                           (
-                               collection_id,
-                               url
-                           )
-                               )
-                           ''')
-
-            # Create indexes
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_collection ON links(collection_id)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_links_url ON links(url)')
-            cursor.execute('CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name)')
-
-        conn.commit()
-        print("✅ Database initialized successfully")
-
-    except Exception as e:
-        conn.rollback()
-        print(f"❌ Error initializing database: {e}")
-        raise
-    finally:
-        close_db_connection(conn)
+    conn.close()
 
 
 # =====================================================
-# UTILITY FUNCTIONS
+# DATABASE CONNECTION
+# =====================================================
+def get_db():
+    """Lấy connection từ pool"""
+    if not hasattr(g, 'db'):
+        g.db = sqlite3.connect(DB_PATH, check_same_thread=False)
+        g.db.row_factory = sqlite3.Row
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(error):
+    """Đóng connection khi kết thúc request"""
+    if hasattr(g, 'db'):
+        g.db.close()
+
+
+# =====================================================
+# URL NORMALIZATION
 # =====================================================
 def normalize_url(url: str) -> str:
-    """Chuẩn hóa URL"""
+    """Chuẩn hóa URL trước khi check"""
+    url = url.strip()
     if not url:
         return ""
 
-    url = url.strip()
-
-    # Bỏ các protocol không phải http/https
+    # Loại bỏ các protocol vô nghĩa
     if url.startswith(("javascript:", "file:", "about:", "mailto:", "tel:")):
         return ""
 
-    # Thêm https:// nếu thiếu
+    # Thêm https:// nếu không có protocol
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    return url.rstrip('/')
+    return url
 
 
 def domain_resolves(url: str) -> bool:
-    """Kiểm tra domain có resolve được không"""
+    """Kiểm tra domain có resolve được không (siêu nhanh)"""
     try:
         host = urlparse(url).hostname
         if not host:
@@ -260,388 +123,23 @@ def domain_resolves(url: str) -> bool:
 
 
 # =====================================================
-# DATABASE OPERATIONS
-# =====================================================
-def get_or_create_collection(name):
-    """Lấy hoặc tạo collection mới"""
-    conn = get_db_connection()
-
-    try:
-        # Tìm collection theo tên
-        if IS_RENDER:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute('SELECT * FROM collections WHERE name = %s', (name,))
-            collection = cursor.fetchone()
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM collections WHERE name = ?', (name,))
-            row = cursor.fetchone()
-            collection = dict(row) if row else None
-
-        if collection:
-            return collection
-
-        # Tạo collection mới
-        now = datetime.now().isoformat()
-        if IS_RENDER:
-            cursor.execute(
-                'INSERT INTO collections (name, created_at, updated_at) VALUES (%s, %s, %s) RETURNING *',
-                (name, now, now)
-            )
-            collection = cursor.fetchone()
-        else:
-            cursor.execute(
-                'INSERT INTO collections (name, created_at, updated_at) VALUES (?, ?, ?)',
-                (name, now, now)
-            )
-            collection_id = cursor.lastrowid
-            cursor.execute('SELECT * FROM collections WHERE id = ?', (collection_id,))
-            collection = dict(cursor.fetchone())
-
-        conn.commit()
-        return collection
-
-    except Exception as e:
-        conn.rollback()
-        raise
-    finally:
-        close_db_connection(conn)
-
-
-def get_collection_by_name(name):
-    """Lấy collection theo tên"""
-    conn = get_db_connection()
-
-    try:
-        if IS_RENDER:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute('SELECT * FROM collections WHERE name = %s', (name,))
-            result = cursor.fetchone()
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM collections WHERE name = ?', (name,))
-            row = cursor.fetchone()
-            result = dict(row) if row else None
-
-        return result
-    finally:
-        close_db_connection(conn)
-
-
-def get_all_collections():
-    """Lấy tất cả collections"""
-    conn = get_db_connection()
-
-    try:
-        if IS_RENDER:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute('SELECT * FROM collections ORDER BY name')
-            return cursor.fetchall()
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM collections ORDER BY name')
-            return [dict(row) for row in cursor.fetchall()]
-    finally:
-        close_db_connection(conn)
-
-
-def update_collection_name(old_name, new_name):
-    """Đổi tên collection"""
-    conn = get_db_connection()
-
-    try:
-        # Kiểm tra tên mới đã tồn tại chưa
-        if IS_RENDER:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM collections WHERE name = %s', (new_name,))
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM collections WHERE name = ?', (new_name,))
-
-        if cursor.fetchone():
-            raise ValueError(f"Collection '{new_name}' đã tồn tại")
-
-        # Cập nhật tên
-        now = datetime.now().isoformat()
-        if IS_RENDER:
-            cursor.execute(
-                'UPDATE collections SET name = %s, updated_at = %s WHERE name = %s',
-                (new_name, now, old_name)
-            )
-        else:
-            cursor.execute(
-                'UPDATE collections SET name = ?, updated_at = ? WHERE name = ?',
-                (new_name, now, old_name)
-            )
-
-        if cursor.rowcount == 0:
-            raise ValueError(f"Collection '{old_name}' không tồn tại")
-
-        conn.commit()
-        return True
-
-    except Exception as e:
-        conn.rollback()
-        raise
-    finally:
-        close_db_connection(conn)
-
-
-def delete_collection(name):
-    """Xóa collection và tất cả links của nó"""
-    conn = get_db_connection()
-
-    try:
-        # Tìm collection
-        if IS_RENDER:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM collections WHERE name = %s', (name,))
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM collections WHERE name = ?', (name,))
-
-        collection = cursor.fetchone()
-
-        if not collection:
-            raise ValueError(f"Collection '{name}' không tồn tại")
-
-        # Xóa collection (links sẽ tự động xóa do CASCADE)
-        if IS_RENDER:
-            cursor.execute('DELETE FROM collections WHERE name = %s', (name,))
-        else:
-            cursor.execute('DELETE FROM collections WHERE name = ?', (name,))
-
-        conn.commit()
-        return True
-
-    except Exception as e:
-        conn.rollback()
-        raise
-    finally:
-        close_db_connection(conn)
-
-
-def save_links_to_collection(collection_name, urls_data):
-    """Lưu/làm mới links trong collection"""
-    conn = get_db_connection()
-
-    try:
-        # Lấy hoặc tạo collection
-        collection = get_or_create_collection(collection_name)
-        collection_id = collection['id']
-
-        # Lấy links hiện tại
-        if IS_RENDER:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute('SELECT * FROM links WHERE collection_id = %s', (collection_id,))
-            existing_links = {row['url']: dict(row) for row in cursor.fetchall()}
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT * FROM links WHERE collection_id = ?', (collection_id,))
-            existing_links = {row['url']: dict(row) for row in cursor.fetchall()}
-
-        now = datetime.now().isoformat()
-
-        # Xử lý từng URL
-        for url_item in urls_data:
-            url = normalize_url(url_item.get('url', ''))
-            if not url:
-                continue
-
-            status = url_item.get('status', 'unknown')
-
-            if url in existing_links:
-                # Cập nhật link đã tồn tại
-                if IS_RENDER:
-                    cursor.execute(
-                        '''UPDATE links
-                           SET status       = %s,
-                               updated_at   = %s,
-                               last_checked = %s
-                           WHERE collection_id = %s
-                             AND url = %s''',
-                        (status, now, now, collection_id, url)
-                    )
-                else:
-                    cursor.execute(
-                        '''UPDATE links
-                           SET status       = ?,
-                               updated_at   = ?,
-                               last_checked = ?
-                           WHERE collection_id = ?
-                             AND url = ?''',
-                        (status, now, now, collection_id, url)
-                    )
-            else:
-                # Thêm link mới
-                try:
-                    if IS_RENDER:
-                        cursor.execute(
-                            '''INSERT INTO links
-                                   (collection_id, url, status, created_at, updated_at, last_checked)
-                               VALUES (%s, %s, %s, %s, %s, %s)''',
-                            (collection_id, url, status, now, now, now)
-                        )
-                    else:
-                        cursor.execute(
-                            '''INSERT INTO links
-                                   (collection_id, url, status, created_at, updated_at, last_checked)
-                               VALUES (?, ?, ?, ?, ?, ?)''',
-                            (collection_id, url, status, now, now, now)
-                        )
-                except Exception:
-                    # URL đã tồn tại, bỏ qua
-                    pass
-
-        # Xác định URLs cần xóa
-        new_urls = {normalize_url(u.get('url', '')) for u in urls_data if normalize_url(u.get('url', ''))}
-        urls_to_delete = [url for url in existing_links if url not in new_urls]
-
-        if urls_to_delete:
-            if IS_RENDER:
-                placeholders = ','.join(['%s'] * len(urls_to_delete))
-                cursor.execute(
-                    f'DELETE FROM links WHERE collection_id = %s AND url IN ({placeholders})',
-                    (collection_id, *urls_to_delete)
-                )
-            else:
-                placeholders = ','.join(['?'] * len(urls_to_delete))
-                cursor.execute(
-                    f'DELETE FROM links WHERE collection_id = ? AND url IN ({placeholders})',
-                    (collection_id, *urls_to_delete)
-                )
-
-        conn.commit()
-
-        # Lấy danh sách links hiện tại
-        if IS_RENDER:
-            cursor.execute(
-                'SELECT id, url, status FROM links WHERE collection_id = %s ORDER BY created_at',
-                (collection_id,)
-            )
-            links = [{'id': row['id'], 'url': row['url'], 'status': row['status']}
-                     for row in cursor.fetchall()]
-        else:
-            cursor.execute(
-                'SELECT id, url, status FROM links WHERE collection_id = ? ORDER BY created_at',
-                (collection_id,)
-            )
-            links = [{'id': row[0], 'url': row[1], 'status': row[2]}
-                     for row in cursor.fetchall()]
-
-        return {
-            'collection': collection_name,
-            'urls': links
-        }
-
-    except Exception as e:
-        conn.rollback()
-        raise
-    finally:
-        close_db_connection(conn)
-
-
-def get_links_in_collection(collection_name):
-    """Lấy tất cả links trong collection"""
-    conn = get_db_connection()
-
-    try:
-        # Tìm collection
-        if IS_RENDER:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM collections WHERE name = %s', (collection_name,))
-        else:
-            cursor = conn.cursor()
-            cursor.execute('SELECT id FROM collections WHERE name = ?', (collection_name,))
-
-        collection = cursor.fetchone()
-
-        if not collection:
-            return []
-
-        # Lấy links
-        collection_id = collection[0]
-
-        if IS_RENDER:
-            cursor = conn.cursor()
-            cursor.execute(
-                'SELECT id, url, status FROM links WHERE collection_id = %s ORDER BY created_at',
-                (collection_id,)
-            )
-            return [{'id': row[0], 'url': row[1], 'status': row[2]}
-                    for row in cursor.fetchall()]
-        else:
-            cursor.execute(
-                'SELECT id, url, status FROM links WHERE collection_id = ? ORDER BY created_at',
-                (collection_id,)
-            )
-            return [{'id': row[0], 'url': row[1], 'status': row[2]}
-                    for row in cursor.fetchall()]
-
-    finally:
-        close_db_connection(conn)
-
-
-def update_link_status(collection_name, link_id, status):
-    """Cập nhật trạng thái link"""
-    conn = get_db_connection()
-
-    try:
-        now = datetime.now().isoformat()
-
-        if IS_RENDER:
-            cursor = conn.cursor()
-            cursor.execute('''
-                           UPDATE links
-                           SET status       = %s,
-                               last_checked = %s,
-                               updated_at   = %s
-                           WHERE id = %s
-                             AND collection_id = (SELECT id
-                                                  FROM collections
-                                                  WHERE name = %s)
-                           ''', (status, now, now, link_id, collection_name))
-        else:
-            cursor = conn.cursor()
-            cursor.execute('''
-                           UPDATE links
-                           SET status       = ?,
-                               last_checked = ?,
-                               updated_at   = ?
-                           WHERE id = ?
-                             AND collection_id = (SELECT id
-                                                  FROM collections
-                                                  WHERE name = ?)
-                           ''', (status, now, now, link_id, collection_name))
-
-        conn.commit()
-        return cursor.rowcount > 0
-
-    except Exception as e:
-        conn.rollback()
-        raise
-    finally:
-        close_db_connection(conn)
-
-
-# =====================================================
-# URL CHECKING FUNCTIONS
+# OPTIMIZED CHECK LINK - SIÊU NHANH
 # =====================================================
 _session = None
 _session_lock = threading.Lock()
 
 
 def get_session():
-    """Tạo session tái sử dụng"""
+    """Tạo session tái sử dụng cho requests với thread safety"""
     global _session
     if _session is None:
         with _session_lock:
             if _session is None:
                 _session = requests.Session()
                 adapter = requests.adapters.HTTPAdapter(
-                    pool_connections=50,
-                    pool_maxsize=50,
-                    max_retries=1,
+                    pool_connections=50,  # Tăng số kết nối
+                    pool_maxsize=50,  # Tăng kích thước pool
+                    max_retries=1,  # Chỉ retry 1 lần
                     pool_block=False
                 )
                 _session.mount('http://', adapter)
@@ -657,24 +155,30 @@ def get_session():
 
 
 def check_one_url(url: str) -> str:
-    """Kiểm tra URL"""
+    """Kiểm tra URL SIÊU NHANH - BỎ HEAD, DÙNG GET nhẹ"""
+    # Loại bỏ sớm các URL vô nghĩa
     if not url or url.startswith(("javascript:", "file:", "about:", "mailto:", "tel:")):
         return "dead"
 
+    # Kiểm tra domain có resolve được không
     if not domain_resolves(url):
         return "dead"
 
     session = get_session()
 
     try:
+        # DÙNG GET với timeout cực ngắn và stream=True để cắt sớm
         response = session.get(
             url,
-            timeout=(1.0, 1.5),
+            timeout=(1.0, 1.5),  # Timeout cực ngắn
             allow_redirects=True,
-            stream=True
+            stream=True  # Quan trọng: không tải content
         )
+
+        # Đóng response ngay lập tức
         response.close()
 
+        # Chỉ cần status code
         if 200 <= response.status_code < 400:
             return "alive"
         return "dead"
@@ -695,227 +199,259 @@ def check_one_url(url: str) -> str:
 @app.get("/api/health")
 def health_check():
     """Endpoint kiểm tra sức khỏe API"""
-    try:
-        db_type = "PostgreSQL" if IS_RENDER else "SQLite"
-        return jsonify({
-            "status": "ok",
-            "timestamp": datetime.now().isoformat(),
-            "database": db_type,
-            "environment": "Render" if IS_RENDER else "Local",
-            "message": "API đang hoạt động"
-        })
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "timestamp": datetime.now().isoformat(),
-            "error": str(e)
-        }), 500
-
-
-@app.post("/api/update-collection")
-def update_collection_api():
-    """Cập nhật collection"""
-    try:
-        data = request.json or {}
-        collection_name = data.get("collection", "").strip()
-        urls = data.get("urls", [])
-
-        if not collection_name:
-            return jsonify({"error": "Tên collection không được để trống"}), 400
-
-        result = save_links_to_collection(collection_name, urls)
-        return jsonify(result)
-
-    except Exception as e:
-        app.logger.error(f"Lỗi khi cập nhật collection: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-@app.post("/api/rename-collection")
-def rename_collection_api():
-    """Đổi tên collection"""
-    try:
-        data = request.json or {}
-        old_name = data.get("old_name", "").strip()
-        new_name = data.get("new_name", "").strip()
-
-        if not old_name or not new_name:
-            return jsonify({"error": "Tên collection cũ và mới không được để trống"}), 400
-
-        update_collection_name(old_name, new_name)
-
-        return jsonify({
-            "success": True,
-            "old_name": old_name,
-            "new_name": new_name
-        })
-
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 409
-    except Exception as e:
-        app.logger.error(f"Lỗi khi đổi tên collection: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+    return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
 
 
 @app.post("/api/check-links")
 def api_check_links():
-    """Kiểm tra link và lưu kết quả"""
+    """Kiểm tra link với batch processing - TỐI ƯU TỐC ĐỘ"""
+    data = request.json or {}
+    links = data.get("links", [])
+
+    if not links:
+        return jsonify([])
+
+    # Tăng worker lên cao (I/O bound nên OK)
+    max_workers = min(20, len(links))
+
+    urls = []
+    link_ids = []
+
+    for link in links:
+        raw_url = link.get('url', '').strip()
+        url = normalize_url(raw_url)  # Chuẩn hóa URL trước
+        if url:
+            urls.append(url)
+            link_id = link.get('id')
+            link_ids.append(link_id if link_id and link_id > 0 else None)
+
+    # Batch check với nhiều worker
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        statuses = list(executor.map(check_one_url, urls))
+
+    now = datetime.now().isoformat()
+    results = []
+    db = get_db()
+
     try:
-        data = request.json or {}
-        collection_name = data.get("collection", "")
-        links = data.get("links", [])
+        db.execute("BEGIN")
 
-        if not collection_name or not links:
-            return jsonify([]), 400
+        for url, link_id, status in zip(urls, link_ids, statuses):
+            result_item = {"url": url, "status": status}
 
-        max_workers = min(20, len(links))
-        urls_to_check = []
-        link_data = []
+            if link_id:
+                try:
+                    cursor = db.execute(
+                        "SELECT id FROM links WHERE id = ?",
+                        (int(link_id),)
+                    )
+                    if cursor.fetchone():
+                        db.execute(
+                            "UPDATE links SET status = ?, last_checked = ? WHERE id = ?",
+                            (status, now, int(link_id))
+                        )
+                        result_item["id"] = int(link_id)
+                    else:
+                        result_item["id"] = None
+                except Exception as e:
+                    app.logger.warning(f"ID {link_id} không tồn tại: {e}")
+                    result_item["id"] = None
 
-        for link in links:
-            raw_url = link.get('url', '').strip()
-            url = normalize_url(raw_url)
-            if url:
-                urls_to_check.append(url)
-                link_data.append({
-                    'id': link.get('id'),
-                    'url': url,
-                    'original': link
-                })
+            results.append(result_item)
 
-        # Batch check
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            statuses = list(executor.map(check_one_url, urls_to_check))
+        db.commit()
 
-        results = []
-        for data_item, status in zip(link_data, statuses):
-            if data_item['id']:
-                update_link_status(collection_name, data_item['id'], status)
+    except Exception as e:
+        db.rollback()
+        app.logger.error(f"Lỗi khi update link status: {e}")
 
-            results.append({
-                "url": data_item['url'],
-                "status": status,
-                "id": data_item['id']
-            })
+        for url, status in zip(urls, statuses):
+            results.append({"url": url, "status": status})
 
         return jsonify(results)
 
+    return jsonify(results)
+
+
+# =====================================================
+# API XÓA NỘI DUNG
+# =====================================================
+@app.delete("/api/delete-content/<int:content_id>")
+def delete_content(content_id):
+    """Xóa nội dung và tất cả link liên quan"""
+    if not content_id or content_id <= 0:
+        return jsonify({"error": "Invalid content ID"}), 400
+
+    db = get_db()
+    try:
+        db.execute("BEGIN")
+
+        # Xóa tất cả link trước (do foreign key constraint)
+        db.execute("DELETE FROM links WHERE content_id = ?", (content_id,))
+
+        # Xóa nội dung
+        cursor = db.execute("DELETE FROM contents WHERE id = ?", (content_id,))
+
+        if cursor.rowcount == 0:
+            db.rollback()
+            return jsonify({"error": "Content not found"}), 404
+
+        db.commit()
+        return jsonify({"success": True, "deleted_id": content_id})
+
     except Exception as e:
-        app.logger.error(f"Lỗi khi kiểm tra links: {e}")
-        traceback.print_exc()
+        db.rollback()
+        app.logger.error(f"Lỗi khi xóa nội dung {content_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 
-@app.delete("/api/delete-collection/<string:collection_name>")
-def delete_collection_api(collection_name):
-    """Xóa toàn bộ collection"""
+# =====================================================
+# API LƯU TỪNG HÀNG
+# =====================================================
+@app.post("/api/save-row")
+def save_row():
+    """Lưu một hàng cụ thể"""
+    item = request.json or {}
+    if not item:
+        return jsonify({"error": "No data provided"}), 400
+
+    content_id = item.get("id")
+    description = item.get("description", "").strip()
+    urls = item.get("urls", [])
+
+    description = html_escape(description)
+    cleaned_urls = []
+    for url_data in urls:
+        url = normalize_url(url_data.get("url", ""))  # Chuẩn hóa khi lưu
+        status = url_data.get("status", "unknown")
+        url_id = url_data.get("id")
+        cleaned_urls.append({
+            "id": url_id,
+            "url": html_escape(url) if url else "",
+            "status": status
+        })
+
+    db = get_db()
     try:
-        delete_collection(collection_name)
-        return jsonify({"success": True, "deleted_collection": collection_name})
+        db.execute("BEGIN")
 
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 404
-    except Exception as e:
-        app.logger.error(f"Lỗi khi xóa collection {collection_name}: {e}")
-        return jsonify({"error": str(e)}), 500
+        if not content_id or content_id < 0:
+            cursor = db.execute(
+                "INSERT INTO contents(description) VALUES (?)",
+                (description,)
+            )
+            content_id = cursor.lastrowid
+        else:
+            db.execute("""
+                UPDATE contents 
+                SET description = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (description, content_id))
+            db.execute("DELETE FROM links WHERE content_id = ?", (content_id,))
 
+        for url_data in cleaned_urls:
+            url = url_data.get("url", "").strip()
+            status = url_data.get("status", "unknown")
 
-@app.get("/api/data")
-def load_data_api():
-    """API endpoint tải dữ liệu từ database"""
-    try:
-        collections = get_all_collections()
-        result = []
+            if not url:
+                continue
 
-        for collection in collections:
-            collection_name = collection['name']
-            links = get_links_in_collection(collection_name)
+            cursor = db.execute("""
+                INSERT INTO links (content_id, url, status)
+                VALUES (?, ?, ?)
+            """, (content_id, url, status))
+            url_data["id"] = cursor.lastrowid
 
-            result.append({
-                "collection": collection_name,
-                "urls": links if links else []
-            })
+        db.commit()
+
+        cursor = db.execute("""
+            SELECT c.id as content_id, c.description, 
+                   l.id as link_id, l.url, l.status
+            FROM contents c
+            LEFT JOIN links l ON c.id = l.content_id
+            WHERE c.id = ?
+            ORDER BY l.id
+        """, (content_id,))
+
+        rows = cursor.fetchall()
+        result = {
+            "id": content_id,
+            "description": description,
+            "urls": []
+        }
+
+        for row in rows:
+            if row['link_id'] is not None:
+                result["urls"].append({
+                    "id": row['link_id'],
+                    "url": row['url'],
+                    "status": row['status'] or "unknown"
+                })
 
         return jsonify(result)
 
     except Exception as e:
+        db.rollback()
+        app.logger.error(f"Lỗi khi lưu hàng: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# =====================================================
+# LOAD DATA API
+# =====================================================
+def load_data_from_db():
+    """Tải dữ liệu từ database riêng biệt"""
+    db = get_db()
+
+    query = """
+    SELECT 
+        c.id as content_id,
+        c.description,
+        l.id as link_id,
+        l.url,
+        l.status,
+        l.last_checked
+    FROM contents c
+    LEFT JOIN links l ON c.id = l.content_id
+    ORDER BY c.id, l.id
+    """
+
+    rows = db.execute(query).fetchall()
+
+    result_map = {}
+
+    for row in rows:
+        content_id = row['content_id']
+
+        if content_id not in result_map:
+            result_map[content_id] = {
+                "id": content_id,
+                "description": html_escape(row['description'] or "") if row['description'] else "",
+                "urls": []
+            }
+
+        if row['link_id'] is not None and row['url'] is not None:
+            result_map[content_id]["urls"].append({
+                "id": row['link_id'],
+                "url": html_escape(row['url']),
+                "status": row['status'] or "unknown"
+            })
+
+    result = list(result_map.values())
+    result.sort(key=lambda x: x["id"])
+
+    return result
+
+
+@app.get("/api/data")
+def load_data_api():
+    """API endpoint tải dữ liệu"""
+    try:
+        result = load_data_from_db()
+        return jsonify(result)
+    except Exception as e:
         app.logger.error(f"Lỗi khi tải dữ liệu: {e}")
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-
-@app.post("/api/add-collection")
-def add_collection_api():
-    """Thêm collection mới"""
-    try:
-        data = request.json or {}
-        collection_name = data.get("collection", "").strip()
-
-        if not collection_name:
-            collection_name = f"Collection_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # Tạo collection (có thể trống)
-        collection = get_or_create_collection(collection_name)
-
-        # Xử lý URLs nếu có
-        urls = data.get("urls", [])
-        if urls:
-            save_links_to_collection(collection_name, urls)
-            links = get_links_in_collection(collection_name)
-        else:
-            links = []
-
-        return jsonify({
-            "success": True,
-            "collection": collection_name,
-            "urls": links
-        })
-
-    except Exception as e:
-        app.logger.error(f"Lỗi khi thêm collection: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
-# =====================================================
-# INITIALIZE DATA
-# =====================================================
-def initialize_sample_data():
-    """Tạo dữ liệu mẫu nếu database trống"""
-    try:
-        collections = get_all_collections()
-
-        if not collections:
-            print("📝 Tạo dữ liệu mẫu...")
-
-            sample_collections = [
-                {
-                    "name": "Các trang web hữu ích",
-                    "links": [
-                        {"url": "https://google.com", "status": "alive"},
-                        {"url": "https://github.com", "status": "alive"}
-                    ]
-                },
-                {
-                    "name": "Học lập trình",
-                    "links": [
-                        {"url": "https://stackoverflow.com", "status": "alive"},
-                        {"url": "https://w3schools.com", "status": "alive"}
-                    ]
-                }
-            ]
-
-            for collection_data in sample_collections:
-                collection_name = collection_data["name"]
-                save_links_to_collection(collection_name, collection_data["links"])
-
-            print("✅ Đã tạo dữ liệu mẫu")
-        else:
-            print(f"✅ Đã có {len(collections)} collections trong database")
-    except Exception as e:
-        print(f"⚠️ Không thể tạo dữ liệu mẫu: {e}")
 
 
 # =====================================================
@@ -923,7 +459,7 @@ def initialize_sample_data():
 # =====================================================
 @app.get("/")
 def index():
-    return render_template("indexN.html")
+    return render_template("index.html")
 
 
 # =====================================================
@@ -937,120 +473,108 @@ def cleanup_webview():
     global _window
     if _window:
         try:
+            # Force close webview
             if hasattr(_window, 'destroy'):
                 _window.destroy()
         except:
             pass
 
+    # Cố gắng xóa thư mục tạm nếu cần
     try:
         temp_dir = os.path.join(tempfile.gettempdir(), 'pywebview')
         if os.path.exists(temp_dir):
             for root, dirs, files in os.walk(temp_dir, topdown=False):
                 for name in files:
                     try:
+                        os.chmod(os.path.join(root, name), 0o777)
                         os.remove(os.path.join(root, name))
+                    except:
+                        pass
+                for name in dirs:
+                    try:
+                        os.rmdir(os.path.join(root, name))
                     except:
                         pass
     except:
         pass
 
 
+# Đăng ký cleanup
 atexit.register(cleanup_webview)
 
 
 # =====================================================
-# RUN APP
+# RUN APP - TỐI ƯU KHỞI ĐỘNG
 # =====================================================
 def start_flask():
     """Khởi động Flask server"""
-    # Khởi tạo database
+    # Khởi tạo DB trước khi app chạy
     init_db()
+
+    # Tạo session sớm để giảm latency đầu tiên
     get_session()
-    initialize_sample_data()
 
-    if IS_RENDER:
-        # Chạy trên Render
-        port = int(os.environ.get('PORT', 10000))
-        print("=" * 50)
-        print("🚀 QUẢN LÝ LINK - PostgreSQL on Render")
-        print("=" * 50)
-        print(f"📊 Database: PostgreSQL")
-        print(f"🌍 Environment: Render Production")
-        print(f"🔗 Public URL sẽ được cung cấp sau khi deploy")
-        print("=" * 50)
-
-        app.run(host='0.0.0.0', port=port, debug=False)
-    else:
-        # Chạy local với webview - SỬA LẠI PHẦN NÀY
-        print("=" * 50)
-        print("🚀 QUẢN LÝ LINK - Local Development")
-        print("=" * 50)
-        print(f"📊 Database: SQLite")
-        print(f"🏠 Environment: Local Development")
-        print(f"🌐 Local URL: http://localhost:5000")  # Đổi thành localhost
-        print("=" * 50)
-
-        flask_thread = threading.Thread(target=lambda: app.run(
-            host="localhost",  # ĐỔI TỪ 127.0.0.1 thành localhost
-            port=5000,
-            debug=False,
-            use_reloader=False,
-            threaded=True
-        ))
-        flask_thread.daemon = True
-        flask_thread.start()
-
-        time.sleep(3)
-
-        screen_width, screen_height = 1400, 800
-        try:
-            import tkinter as tk
-            root = tk.Tk()
-            screen_width = root.winfo_screenwidth()
-            screen_height = root.winfo_screenheight()
-            root.destroy()
-        except:
-            pass
-
-        window_width = min(1400, screen_width - 100)
-        window_height = min(800, screen_height - 100)
-        window_x = (screen_width - window_width) // 2
-        window_y = (screen_height - window_height) // 2
-
-        try:
-            window = webview.create_window(
-                title="Quản Lý Link - Local Database",
-                url="http://localhost:5000",  # ĐỔI TỪ 127.0.0.1 thành localhost
-                width=window_width,
-                height=window_height,
-                x=window_x,
-                y=window_y,
-                resizable=True,
-                min_size=(800, 500),
-                background_color='#f5f7fa',
-            )
-
-            _window = window
-            webview.start()
-        except Exception as e:
-            print(f"⚠️ Lỗi khi khởi động window: {e}")
-            print("🌐 Bạn có thể truy cập ứng dụng tại: http://localhost:5000")  # Đổi thành localhost
-
-        cleanup_webview()
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=False,
+        use_reloader=False,
+        threaded=True
+    )
 
 
-def start_render():
-    """Start for Render deployment"""
-    init_db()
-    get_session()
-    initialize_sample_data()
-
-    port = int(os.environ.get('PORT', 10000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+def get_screen_size():
+    """Lấy kích thước màn hình"""
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        root.destroy()
+        return screen_width, screen_height
+    except:
+        return 1920, 1080
 
 
 if __name__ == "__main__":
-    if IS_RENDER:
-        start_render()
-    else:
-        start_flask()
+    # Khởi động Flask trong thread riêng
+    flask_thread = threading.Thread(target=start_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    # Chờ ngắn để Flask khởi động
+    time.sleep(1)
+
+    # Lấy kích thước màn hình
+    screen_width, screen_height = get_screen_size()
+
+    # Mở cửa sổ full screen ngay từ đầu
+    window_width = screen_width // 2
+    window_height = screen_height // 2
+
+    window_x = 0
+    window_y = 0
+
+    try:
+        window = webview.create_window(
+            title="Quản Lý Link",
+            url="http://127.0.0.1:5000",
+            width=window_width,
+            height=window_height,
+            x=window_x,
+            y=window_y,
+            resizable=True,
+            min_size=(600, 400),
+            background_color='#f5f7fa',
+
+        )
+
+        _window = window  # Lưu reference
+
+        webview.start()
+    except Exception as e:
+        print(f"Lỗi khi khởi động window: {e}")
+        print("Bạn có thể truy cập ứng dụng tại: http://127.0.0.1:5000")
+
+    # Đảm bảo dọn dẹp khi thoát
+    cleanup_webview()
